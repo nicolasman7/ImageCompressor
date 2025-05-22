@@ -1,61 +1,56 @@
-import os
+import streamlit as st
 from PIL import Image
 from io import BytesIO
-from tkinter import Tk, filedialog
+import os
+import zipfile
 
-# Configs
 MAX_DIM = 2000
 MAX_SIZE = 2 * 1024 * 1024
 SUPPORTED_FORMATS = ('.jpg', '.jpeg', '.png')
 
-def select_folder():
-    root = Tk()
-    root.withdraw()
-    folder = filedialog.askdirectory(title="Select the Folder Containing Images")
-    return folder
+def resize_and_compress(image_file):
+    img = Image.open(image_file).convert("RGB")
+    img.thumbnail((MAX_DIM, MAX_DIM))
+    buffer = BytesIO()
 
-def resize_and_compress(input_path, output_path):
-    with Image.open(input_path).convert("RGB") as img:
-        img.thumbnail((MAX_DIM, MAX_DIM))
-        buffer = BytesIO()
+    low, high = 10, 95
+    while low <= high:
+        mid = (low + high) // 2
+        buffer.seek(0)
+        buffer.truncate()
+        img.save(buffer, format='JPEG', quality=mid, optimize=True)
+        if buffer.tell() <= MAX_SIZE:
+            low = mid + 1
+        else:
+            high = mid - 1
 
-        low, high = 10, 95
-        while low <= high:
-            mid = (low + high) // 2
-            buffer.seek(0)
-            buffer.truncate()
-            img.save(buffer, format='JPEG', quality=mid, optimize=True)
-            if buffer.tell() <= MAX_SIZE:
-                low = mid + 1
-            else:
-                high = mid - 1
+    return buffer
 
-        with open(output_path, 'wb') as f:
-            f.write(buffer.getvalue())
+# Streamlit app starts here
+st.markdown("""
+    <h1 style="text-align:center;">🗜️ Image Compressor</h1>
+    <p style="text-align:center;">
+        Click the button to upload images. They will be resized (max 2000x2000) and compressed (max 2MB).
+    </p>
+""", unsafe_allow_html=True)
 
-def process_recursive(input_root):
-    output_root = input_root.rstrip('/\\') + "_compressed"
+uploaded_files = st.file_uploader("Choose image(s)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
-    for root, _, files in os.walk(input_root):
-        rel_path = os.path.relpath(root, input_root)
-        output_dir = os.path.join(output_root, rel_path)
-        os.makedirs(output_dir, exist_ok=True)
+if st.button("Compress Images") and uploaded_files:
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for file in uploaded_files:
+            compressed = resize_and_compress(file)
+            file_name = f"compressed_{file.name}"
+            zipf.writestr(file_name, compressed.getvalue())
 
-        for filename in files:
-            if filename.lower().endswith(SUPPORTED_FORMATS):
-                input_file = os.path.join(root, filename)
-                output_file = os.path.join(output_dir, filename)
-                try:
-                    resize_and_compress(input_file, output_file)
-                    print(f"Processed: {os.path.join(rel_path, filename)}")
-                except Exception as e:
-                    print(f"Error processing {filename}: {e}")
+    st.success(f"{len(uploaded_files)} image(s) compressed!")
 
-    print(f"\n✅ All done! Compressed folder: {output_root}")
-
-if __name__ == '__main__':
-    folder = select_folder()
-    if folder:
-        process_recursive(folder)
-    else:
-        print("❌ No folder selected.")
+    st.download_button(
+        label="Download All as ZIP",
+        data=zip_buffer.getvalue(),
+        file_name="compressed_images.zip",
+        mime="application/zip"
+    )
+elif uploaded_files:
+    st.warning("Click the 'Compress Images' button to start.")
